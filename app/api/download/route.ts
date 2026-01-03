@@ -67,14 +67,21 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
     // Build yt-dlp arguments with YouTube-specific optimizations
     // Helper function to build args with optional JS runtime
     const buildArgs = (useJsRuntime: boolean = true): string[] => {
+      // Rotate player clients to reduce rate limiting
+      const playerClients = ['android', 'ios', 'web', 'web_mobile'];
+      const clientIndex = Math.floor(Math.random() * playerClients.length);
+      const selectedClient = playerClients[clientIndex];
+      
       const baseArgs: string[] = [
         url,
         '-o', outputPath,
         '--no-playlist',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '--extractor-args', 'youtube:player_client=web',
+        '--extractor-args', `youtube:player_client=${selectedClient}`,
         '--retries', '3', // Retry up to 3 times for transient errors
         '--fragment-retries', '3', // Retry fragments
+        '--sleep-interval', '1', // Add delay between requests
+        '--max-sleep-interval', '3', // Random delay up to 3 seconds
       ];
       
       // Add JS runtime if requested
