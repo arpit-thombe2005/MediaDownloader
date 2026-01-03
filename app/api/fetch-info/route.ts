@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function fetchYouTubeInfo(url: string) {
+async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
   try {
     // Extract video ID for validation
     const videoId = extractYouTubeId(url);
@@ -57,7 +57,7 @@ async function fetchYouTubeInfo(url: string) {
     }
 
     // Use yt-dlp to fetch YouTube info (ytdl-core always fails, so skip it to avoid debug files)
-    return new Promise((resolve, reject) => {
+    return new Promise<NextResponse>((resolve, reject) => {
       const pythonCommands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
       
       function tryPythonCommand(index: number) {
@@ -146,7 +146,7 @@ async function fetchYouTubeInfo(url: string) {
   }
 }
 
-async function fetchInstagramInfo(url: string) {
+async function fetchInstagramInfo(url: string): Promise<NextResponse> {
   try {
     const shortcode = extractInstagramShortcode(url);
     if (!shortcode) {
@@ -154,7 +154,7 @@ async function fetchInstagramInfo(url: string) {
     }
 
     // Use yt-dlp to fetch Instagram info (it handles Instagram authentication)
-    return new Promise((resolve, reject) => {
+    return new Promise<NextResponse>((resolve, reject) => {
       const pythonCommands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
       
       function tryPythonCommand(index: number) {
