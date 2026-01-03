@@ -126,7 +126,7 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
         if (code === -4058 || errorOutput.includes('not found') || errorOutput.includes('command not found') || errorOutput.includes('ENOENT')) {
           const pythonCommands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
           
-          function tryPythonCommand(index: number) {
+          const tryPythonCommand = (index: number) => {
             if (index >= pythonCommands.length) {
               reject(new Error(`yt-dlp is not installed. Please install it:\n1. Install Python: https://www.python.org/downloads/\n2. Run: pip install yt-dlp\n\nOr download yt-dlp.exe from: https://github.com/yt-dlp/yt-dlp/releases`));
               return;
@@ -240,7 +240,7 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
               // Python command not found, try next one
               tryPythonCommand(index + 1);
             });
-          }
+          };
           
           tryPythonCommand(0);
           return;
@@ -334,13 +334,13 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
       }
     });
     
-    ytdlp.on('error', (error: Error) => {
+    ytdlp.on('error', (error: Error & { code?: string }) => {
       // If yt-dlp command not found, try python -m yt_dlp
       if (error.message.includes('ENOENT') || error.code === 'ENOENT' || error.message.includes('spawn') || error.message.includes('not found')) {
         // Try python fallback - on Windows, try 'py' first, then 'python', then 'python3'
         const pythonCommands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
         
-        function tryPythonCommand(index: number) {
+        const tryPythonCommand = (index: number) => {
           if (index >= pythonCommands.length) {
             reject(new Error(`yt-dlp is not installed. Please install it:\n1. Install Python: https://www.python.org/downloads/\n2. Run: pip install yt-dlp\n\nOr download yt-dlp.exe from: https://github.com/yt-dlp/yt-dlp/releases`));
             return;
@@ -454,7 +454,7 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
             // Python command not found, try next one
             tryPythonCommand(index + 1);
           });
-        }
+        };
         
         tryPythonCommand(0);
         return;
@@ -493,7 +493,7 @@ async function downloadSpotify(url: string, format: string): Promise<NextRespons
     const pythonCommands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
     const tempDir = os.tmpdir();
     
-    function tryDownload(index: number) {
+    const tryDownload = (index: number) => {
       if (index >= pythonCommands.length) {
         reject(new Error('Spotify: spotdl is not installed. Please install it: pip install spotdl'));
         return;
@@ -749,7 +749,7 @@ async function downloadSpotify(url: string, format: string): Promise<NextRespons
           reject(new Error(`Spotify: Failed to start spotdl: ${error.message}. Please install it: pip install spotdl`));
         }
       });
-    }
+    };
     
     tryDownload(0);
   });
