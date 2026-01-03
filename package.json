@@ -3,12 +3,19 @@
   "version": "1.0.0",
   "description": "A modern web application to download media from YouTube, Instagram, and Spotify",
   "private": true,
+
+  "engines": {
+    "node": "18.x"
+  },
+
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "bash install-deps.sh"
   },
+
   "dependencies": {
     "@distube/ytdl-core": "^4.14.12",
     "@types/archiver": "^7.0.0",
@@ -18,6 +25,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
+
   "devDependencies": {
     "@types/fluent-ffmpeg": "^2.1.24",
     "@types/node": "^20.10.5",
