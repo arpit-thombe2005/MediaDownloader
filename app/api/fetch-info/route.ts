@@ -60,14 +60,37 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
     return new Promise<NextResponse>((resolve, reject) => {
       const pythonCommands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
       
-      function tryPythonCommand(index: number) {
-        if (index >= pythonCommands.length) {
+      // Try with JS runtime first, then fallback without it
+      function tryWithJsRuntime(pythonIndex: number, useJsRuntime: boolean = true) {
+        if (pythonIndex >= pythonCommands.length) {
           reject(new Error('YouTube: yt-dlp is not installed. Please install it: pip install yt-dlp'));
           return;
         }
         
-        const pythonCmd = pythonCommands[index];
-        const pythonProcess = spawn(pythonCmd, ['-m', 'yt_dlp', '--dump-json', normalizedUrl]);
+        const pythonCmd = pythonCommands[pythonIndex];
+        // Add JavaScript runtime support and better headers for YouTube
+        const ytdlpArgs = [
+          '-m', 'yt_dlp',
+          '--dump-json',
+          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          '--extractor-args', 'youtube:player_client=web',
+        ];
+        
+        // Add JS runtime if available and requested
+        if (useJsRuntime) {
+          // Use Node.js runtime - yt-dlp will find it in PATH
+          // If Node.js is not in PATH, we can specify the path explicitly
+          const nodePath = process.execPath;
+          if (nodePath) {
+            ytdlpArgs.push('--js-runtimes', `node:${nodePath}`);
+          } else {
+            ytdlpArgs.push('--js-runtimes', 'node');
+          }
+        }
+        
+        ytdlpArgs.push(normalizedUrl);
+        
+        const pythonProcess = spawn(pythonCmd, ytdlpArgs);
         let output = '';
         let errorOutput = '';
         
@@ -126,8 +149,23 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
               reject(new Error(`YouTube: Failed to parse yt-dlp output: ${parseError.message}`));
             }
           } else {
-            if (index < pythonCommands.length - 1) {
-              tryPythonCommand(index + 1);
+            // Check for rate limiting (429) or bot detection errors
+            const errorLower = errorOutput.toLowerCase();
+            if (errorLower.includes('429') || errorLower.includes('too many requests')) {
+              reject(new Error('YouTube: Rate limit exceeded. Please try again in a few minutes.'));
+            } else if (errorLower.includes('sign in') || errorLower.includes('bot') || errorLower.includes('captcha')) {
+              reject(new Error('YouTube: Bot detection triggered. This may resolve automatically. Please try again later.'));
+            } else if (errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes')) {
+              // JS runtime error - try without it
+              if (useJsRuntime) {
+                tryWithJsRuntime(pythonIndex, false);
+              } else if (pythonIndex < pythonCommands.length - 1) {
+                tryWithJsRuntime(pythonIndex + 1, true);
+              } else {
+                reject(new Error(`YouTube: yt-dlp failed: ${errorOutput || 'Unknown error'}`));
+              }
+            } else if (pythonIndex < pythonCommands.length - 1) {
+              tryWithJsRuntime(pythonIndex + 1, useJsRuntime);
             } else {
               reject(new Error(`YouTube: yt-dlp failed: ${errorOutput || 'Unknown error'}`));
             }
@@ -135,11 +173,15 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
         });
         
         pythonProcess.on('error', () => {
-          tryPythonCommand(index + 1);
+          if (pythonIndex < pythonCommands.length - 1) {
+            tryWithJsRuntime(pythonIndex + 1, useJsRuntime);
+          } else {
+            reject(new Error('YouTube: Python not found. Please install Python.'));
+          }
         });
       }
       
-      tryPythonCommand(0);
+      tryWithJsRuntime(0, true);
     });
   } catch (error: any) {
     throw new Error(`YouTube: ${error.message}`);

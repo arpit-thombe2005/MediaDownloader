@@ -64,12 +64,34 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
     const extension = format === 'audio' ? 'mp3' : 'mp4';
     const outputPath = path.join(tempDir, `${videoId}.${extension}`);
     
-    // Build yt-dlp arguments
-    const args: string[] = [
-      url,
-      '-o', outputPath,
-      '--no-playlist',
-    ];
+    // Build yt-dlp arguments with YouTube-specific optimizations
+    // Helper function to build args with optional JS runtime
+    const buildArgs = (useJsRuntime: boolean = true): string[] => {
+      const baseArgs: string[] = [
+        url,
+        '-o', outputPath,
+        '--no-playlist',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--extractor-args', 'youtube:player_client=web',
+        '--retries', '3', // Retry up to 3 times for transient errors
+        '--fragment-retries', '3', // Retry fragments
+      ];
+      
+      // Add JS runtime if requested
+      if (useJsRuntime) {
+        const nodePath = process.execPath;
+        if (nodePath) {
+          baseArgs.push('--js-runtimes', `node:${nodePath}`);
+        } else {
+          baseArgs.push('--js-runtimes', 'node');
+        }
+      }
+      
+      return baseArgs;
+    };
+    
+    // Start with JS runtime enabled
+    let args = buildArgs(true);
     
     if (format === 'audio') {
       args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
@@ -88,6 +110,10 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
       // Force mp4 output format when merging streams (requires ffmpeg)
       args.push('--merge-output-format', 'mp4');
     }
+    
+    // Track if we've tried without JS runtime (for fallback)
+    let triedWithoutJsRuntime = false;
+    const originalArgs = [...args];
     
     // Try different methods to run yt-dlp
     // Update PATH to include system PATH (for ffmpeg support)
@@ -231,8 +257,24 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
                   reject(new Error(`Failed to read downloaded file: ${fileError.message}`));
                 }
               } else {
-                // Try next Python command
-                tryPythonCommand(index + 1);
+                // Check for rate limiting or bot detection
+                const errorLower = pythonError.toLowerCase();
+                if (errorLower.includes('429') || errorLower.includes('too many requests')) {
+                  reject(new Error('YouTube: Rate limit exceeded. Please try again in a few minutes.'));
+                  return;
+                } else if (errorLower.includes('sign in') || errorLower.includes('bot') || errorLower.includes('captcha')) {
+                  reject(new Error('YouTube: Bot detection triggered. This may resolve automatically. Please try again later.'));
+                  return;
+                } else if ((errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes')) && !triedWithoutJsRuntime) {
+                  // JS runtime error - note that we tried, but continue with error message
+                  triedWithoutJsRuntime = true;
+                  reject(new Error(`YouTube: JavaScript runtime issue detected. Node.js may not be accessible to yt-dlp. Error: ${pythonError.substring(0, 300)}`));
+                  return;
+                } else if (index < pythonCommands.length - 1) {
+                  tryPythonCommand(index + 1);
+                } else {
+                  reject(new Error(`YouTube: yt-dlp failed: ${pythonError || 'Unknown error'}`));
+                }
               }
             });
             
@@ -243,6 +285,18 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
           };
           
           tryPythonCommand(0);
+          return;
+        }
+        // Check for rate limiting or bot detection
+        const errorLower = errorOutput.toLowerCase();
+        if (errorLower.includes('429') || errorLower.includes('too many requests')) {
+          reject(new Error('YouTube: Rate limit exceeded. Please try again in a few minutes.'));
+          return;
+        } else if (errorLower.includes('sign in') || errorLower.includes('bot') || errorLower.includes('captcha')) {
+          reject(new Error('YouTube: Bot detection triggered. This may resolve automatically. Please try again later.'));
+          return;
+        } else if (errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes')) {
+          reject(new Error(`YouTube: JavaScript runtime issue. Node.js path: ${process.execPath || 'not found'}. Error: ${errorOutput.substring(0, 300)}`));
           return;
         }
         // If we get here, python fallback also failed or wasn't triggered
@@ -445,8 +499,24 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
                 reject(new Error(`Failed to read downloaded file: ${fileError.message}`));
               }
             } else {
-              // Python process failed, try next command
-              tryPythonCommand(index + 1);
+              // Check for rate limiting or bot detection
+              const errorLower = pythonError.toLowerCase();
+              if (errorLower.includes('429') || errorLower.includes('too many requests')) {
+                reject(new Error('YouTube: Rate limit exceeded. Please try again in a few minutes.'));
+                return;
+              } else if (errorLower.includes('sign in') || errorLower.includes('bot') || errorLower.includes('captcha')) {
+                reject(new Error('YouTube: Bot detection triggered. This may resolve automatically. Please try again later.'));
+                return;
+              } else if ((errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes')) && !triedWithoutJsRuntime) {
+                triedWithoutJsRuntime = true;
+                reject(new Error(`YouTube: JavaScript runtime issue detected. Node.js may not be accessible to yt-dlp. Error: ${pythonError.substring(0, 300)}`));
+                return;
+              } else if (index < pythonCommands.length - 1) {
+                // Python process failed, try next command
+                tryPythonCommand(index + 1);
+              } else {
+                reject(new Error(`YouTube: yt-dlp failed: ${pythonError || 'Unknown error'}`));
+              }
             }
           });
           
