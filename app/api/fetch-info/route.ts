@@ -60,11 +60,25 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
     return new Promise<NextResponse>((resolve, reject) => {
       const pythonCommands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
       
-      // Try with JS runtime first, then fallback without it
-      // Track retry attempts for rate limiting
-      const maxRetries = 3;
+      // Detect if running on Render (shared IP = more aggressive rate limiting)
+      const isRender = process.env.RENDER || process.env.RENDER_SERVICE_ID || false;
       
-      function tryWithJsRuntime(pythonIndex: number, useJsRuntime: boolean = true, retryAttempt: number = 0) {
+      // Add initial delay on Render to avoid immediate rate limiting
+      if (isRender) {
+        const initialDelay = Math.random() * 2000 + 1000; // 1-3 seconds random delay
+        setTimeout(() => {
+          startFetch();
+        }, initialDelay);
+      } else {
+        startFetch();
+      }
+      
+      function startFetch() {
+        // Try with JS runtime first, then fallback without it
+        // Track retry attempts for rate limiting
+        const maxRetries = isRender ? 5 : 3; // More retries on Render
+        
+        function tryWithJsRuntime(pythonIndex: number, useJsRuntime: boolean = true, retryAttempt: number = 0) {
         if (pythonIndex >= pythonCommands.length) {
           reject(new Error('YouTube: yt-dlp is not installed. Please install it: pip install yt-dlp'));
           return;
@@ -78,13 +92,28 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
         const clientIndex = Math.floor(Math.random() * playerClients.length);
         const selectedClient = playerClients[clientIndex];
         
+        // Detect if running on Render (shared IP = more aggressive rate limiting)
+        const isRender = process.env.RENDER || process.env.RENDER_SERVICE_ID || false;
+        const baseDelay = isRender ? '3' : '1'; // Longer delays on Render
+        const maxDelay = isRender ? '8' : '3'; // Much longer max delay on Render
+        
+        // Rotate user agents to appear more like different browsers
+        const userAgents = [
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+        ];
+        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+        
         const ytdlpArgs = [
           '-m', 'yt_dlp',
           '--dump-json',
-          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          '--user-agent', userAgent,
           '--extractor-args', `youtube:player_client=${selectedClient}`,
-          '--sleep-interval', '1', // Add delay between requests
-          '--max-sleep-interval', '3', // Random delay up to 3 seconds
+          '--sleep-interval', baseDelay, // Longer delay on Render
+          '--max-sleep-interval', maxDelay, // Much longer max delay on Render
+          '--sleep-subtitles', '1', // Delay for subtitles too
         ];
         
         // Add JS runtime if available and requested
@@ -165,24 +194,32 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
             // Check for rate limiting (429) or bot detection errors
             const errorLower = errorOutput.toLowerCase();
             if (errorLower.includes('429') || errorLower.includes('too many requests')) {
-              // Implement exponential backoff for rate limiting
+              // Implement exponential backoff for rate limiting (more aggressive on Render)
               if (retryAttempt < maxRetries) {
-                const delay = Math.min(1000 * Math.pow(2, retryAttempt), 10000); // Max 10 seconds
-                console.log(`YouTube rate limited, retrying after ${delay}ms (attempt ${retryAttempt + 1}/${maxRetries})`);
+                const baseDelay = isRender ? 5000 : 1000; // Start with 5s on Render, 1s locally
+                const maxDelay = isRender ? 30000 : 10000; // Max 30s on Render, 10s locally
+                const delay = Math.min(baseDelay * Math.pow(2, retryAttempt), maxDelay);
+                const jitter = Math.random() * 2000; // Add random jitter (0-2s)
+                const totalDelay = delay + jitter;
+                console.log(`YouTube rate limited, retrying after ${Math.round(totalDelay)}ms (attempt ${retryAttempt + 1}/${maxRetries})`);
                 setTimeout(() => {
                   tryWithJsRuntime(pythonIndex, useJsRuntime, retryAttempt + 1);
-                }, delay);
+                }, totalDelay);
                 return;
               }
               reject(new Error('YouTube: Rate limit exceeded. Please try again in a few minutes.'));
             } else if (errorLower.includes('sign in') || errorLower.includes('bot') || errorLower.includes('captcha')) {
-              // For bot detection, wait longer before retry
+              // For bot detection, wait longer before retry (even longer on Render)
               if (retryAttempt < maxRetries) {
-                const delay = Math.min(2000 * Math.pow(2, retryAttempt), 15000); // Max 15 seconds
-                console.log(`YouTube bot detection, retrying after ${delay}ms (attempt ${retryAttempt + 1}/${maxRetries})`);
+                const baseDelay = isRender ? 10000 : 2000; // Start with 10s on Render, 2s locally
+                const maxDelay = isRender ? 45000 : 15000; // Max 45s on Render, 15s locally
+                const delay = Math.min(baseDelay * Math.pow(2, retryAttempt), maxDelay);
+                const jitter = Math.random() * 3000; // Add random jitter (0-3s)
+                const totalDelay = delay + jitter;
+                console.log(`YouTube bot detection, retrying after ${Math.round(totalDelay)}ms (attempt ${retryAttempt + 1}/${maxRetries})`);
                 setTimeout(() => {
                   tryWithJsRuntime(pythonIndex, useJsRuntime, retryAttempt + 1);
-                }, delay);
+                }, totalDelay);
                 return;
               }
               reject(new Error('YouTube: Bot detection triggered. This may resolve automatically. Please try again later.'));
@@ -212,7 +249,8 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
         });
       }
       
-      tryWithJsRuntime(0, true);
+        tryWithJsRuntime(0, true);
+      }
     });
   } catch (error: any) {
     throw new Error(`YouTube: ${error.message}`);
