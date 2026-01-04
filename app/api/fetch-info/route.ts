@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { detectPlatform, extractYouTubeId, extractInstagramShortcode, extractSpotifyId } from '@/lib/utils';
 import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 
 export async function GET(request: NextRequest) {
   try {
@@ -60,6 +62,11 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
     return new Promise<NextResponse>((resolve, reject) => {
       const pythonCommands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
       
+      // Check for cookies.txt file in project root
+      const projectRoot = process.cwd();
+      const cookiesPath = path.join(projectRoot, 'cookies.txt');
+      const hasCookies = fs.existsSync(cookiesPath);
+      
       // Detect if running on Render (shared IP = more aggressive rate limiting)
       const isRender = process.env.RENDER || process.env.RENDER_SERVICE_ID || false;
       
@@ -115,6 +122,12 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
           '--max-sleep-interval', maxDelay, // Much longer max delay on Render
           '--sleep-subtitles', '1', // Delay for subtitles too
         ];
+        
+        // Add cookies if available (helps bypass rate limiting on Render)
+        if (hasCookies) {
+          ytdlpArgs.push('--cookies', cookiesPath);
+          console.log('Using YouTube cookies from cookies.txt');
+        }
         
         // Add JS runtime if available and requested
         if (useJsRuntime) {

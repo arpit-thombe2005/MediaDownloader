@@ -43,6 +43,9 @@ next-env.d.ts
 *-watch.html
 *-player-script.js
 
+# YouTube cookies (contains sensitive authentication data)
+cookies.txt
+YOUTUBE_COOKIES_SETUP.md
 
 
 

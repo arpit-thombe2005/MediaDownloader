@@ -64,6 +64,11 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
     const extension = format === 'audio' ? 'mp3' : 'mp4';
     const outputPath = path.join(tempDir, `${videoId}.${extension}`);
     
+    // Check for cookies.txt file in project root
+    const projectRoot = process.cwd();
+    const cookiesPath = path.join(projectRoot, 'cookies.txt');
+    const hasCookies = fs.existsSync(cookiesPath);
+    
     // Build yt-dlp arguments with YouTube-specific optimizations
     // Helper function to build args with optional JS runtime
     const buildArgs = (useJsRuntime: boolean = true): string[] => {
@@ -99,6 +104,12 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
         '--max-sleep-interval', maxDelay, // Much longer max delay on Render
         '--sleep-subtitles', '1', // Delay for subtitles too
       ];
+      
+      // Add cookies if available (helps bypass rate limiting on Render)
+      if (hasCookies) {
+        baseArgs.push('--cookies', cookiesPath);
+        console.log('Using YouTube cookies from cookies.txt');
+      }
       
       // Add JS runtime if requested
       if (useJsRuntime) {
