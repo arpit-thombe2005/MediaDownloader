@@ -72,8 +72,9 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
         
         const pythonCmd = pythonCommands[pythonIndex];
         // Add JavaScript runtime support and better headers for YouTube
-        // Rotate player clients to reduce rate limiting: android, ios, web, web_mobile
-        const playerClients = ['android', 'ios', 'web', 'web_mobile'];
+        // Use player clients that don't require PO tokens (android requires GVS PO Token)
+        // Rotate between ios and web to reduce rate limiting
+        const playerClients = ['ios', 'web'];
         const clientIndex = Math.floor(Math.random() * playerClients.length);
         const selectedClient = playerClients[clientIndex];
         
@@ -96,6 +97,8 @@ async function fetchYouTubeInfo(url: string): Promise<NextResponse> {
           } else {
             ytdlpArgs.push('--js-runtimes', 'node');
           }
+          // Add remote components for JS challenge solving (recommended by yt-dlp)
+          ytdlpArgs.push('--remote-components', 'ejs:github');
         }
         
         ytdlpArgs.push(normalizedUrl);

@@ -67,8 +67,9 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
     // Build yt-dlp arguments with YouTube-specific optimizations
     // Helper function to build args with optional JS runtime
     const buildArgs = (useJsRuntime: boolean = true): string[] => {
-      // Rotate player clients to reduce rate limiting
-      const playerClients = ['android', 'ios', 'web', 'web_mobile'];
+      // Use player clients that don't require PO tokens (android requires GVS PO Token)
+      // Rotate between ios and web to reduce rate limiting
+      const playerClients = ['ios', 'web'];
       const clientIndex = Math.floor(Math.random() * playerClients.length);
       const selectedClient = playerClients[clientIndex];
       
@@ -92,6 +93,8 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
         } else {
           baseArgs.push('--js-runtimes', 'node');
         }
+        // Add remote components for JS challenge solving (recommended by yt-dlp)
+        baseArgs.push('--remote-components', 'ejs:github');
       }
       
       return baseArgs;
@@ -105,21 +108,23 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
     } else {
       // Video quality mapping - merge video and audio streams
       // Prefer H.264 (avc1) video and AAC (mp4a) audio codecs for maximum compatibility
-      // AV1 and Opus codecs are not widely supported by media players
+      // Add fallbacks to ensure we can download even if preferred formats aren't available
+      // Format: preferred/fallback1/fallback2/best (yt-dlp will try each in order)
       const qualityMap: Record<string, string> = {
-        best: 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1]+bestaudio/bestvideo+bestaudio',
-        '1080p': 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio',
-        '720p': 'bestvideo[vcodec^=avc1][height<=720]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=720]+bestaudio/bestvideo[height<=720]+bestaudio',
-        '480p': 'bestvideo[vcodec^=avc1][height<=480]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=480]+bestaudio/bestvideo[height<=480]+bestaudio',
-        '360p': 'bestvideo[vcodec^=avc1][height<=360]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=360]+bestaudio/bestvideo[height<=360]+bestaudio',
+        best: 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1]+bestaudio/bestvideo+bestaudio/best',
+        '1080p': 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+        '720p': 'bestvideo[vcodec^=avc1][height<=720]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=720]+bestaudio/bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+        '480p': 'bestvideo[vcodec^=avc1][height<=480]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=480]+bestaudio/bestvideo[height<=480]+bestaudio/best[height<=480]/best',
+        '360p': 'bestvideo[vcodec^=avc1][height<=360]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=360]+bestaudio/bestvideo[height<=360]+bestaudio/best[height<=360]/best',
       };
-      args.push('-f', qualityMap[quality] || 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio');
+      args.push('-f', qualityMap[quality] || 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio/best');
       // Force mp4 output format when merging streams (requires ffmpeg)
       args.push('--merge-output-format', 'mp4');
     }
     
     // Track if we've tried without JS runtime (for fallback)
     let triedWithoutJsRuntime = false;
+    let triedGenericFormat = false;
     const originalArgs = [...args];
     
     // Try different methods to run yt-dlp
@@ -272,11 +277,86 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
                 } else if (errorLower.includes('sign in') || errorLower.includes('bot') || errorLower.includes('captcha')) {
                   reject(new Error('YouTube: Bot detection triggered. This may resolve automatically. Please try again later.'));
                   return;
-                } else if ((errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes')) && !triedWithoutJsRuntime) {
-                  // JS runtime error - note that we tried, but continue with error message
-                  triedWithoutJsRuntime = true;
-                  reject(new Error(`YouTube: JavaScript runtime issue detected. Node.js may not be accessible to yt-dlp. Error: ${pythonError.substring(0, 300)}`));
+                } else if (errorLower.includes('requested format is not available') || errorLower.includes('format is not available')) {
+                  // Format not available - try with a simpler, more generic format selector
+                  if (!triedGenericFormat) {
+                    triedGenericFormat = true;
+                    console.log('Format not available, retrying with generic format selector');
+                    // Retry with a simpler format that should always work
+                    const simpleArgs = buildArgs(useJsRuntime);
+                    simpleArgs.push('-f', 'best/bestvideo+bestaudio'); // Very generic fallback
+                    if (format === 'audio') {
+                      simpleArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
+                    } else {
+                      simpleArgs.push('--merge-output-format', 'mp4');
+                    }
+                    
+                    const retryProcess = spawn(pythonCmd, ['-m', 'yt_dlp', ...simpleArgs], { env });
+                    const retryChunks: Buffer[] = [];
+                    let retryError = '';
+                    
+                    retryProcess.stdout.on('data', (data: Buffer) => {
+                      retryChunks.push(data);
+                    });
+                    
+                    retryProcess.stderr.on('data', (data: Buffer) => {
+                      retryError += data.toString();
+                    });
+                    
+                    retryProcess.on('close', async (retryCode) => {
+                      if (retryCode === 0) {
+                        // Same file reading logic as before
+                        let actualFilePath = outputPath;
+                        if (!fs.existsSync(outputPath)) {
+                          const files = fs.readdirSync(tempDir);
+                          const matchingFiles = files.filter(file => file.startsWith(videoId));
+                          const sortedFiles = matchingFiles.sort((a, b) => {
+                            const aIsMp4 = a.endsWith('.mp4');
+                            const bIsMp4 = b.endsWith('.mp4');
+                            if (aIsMp4 && !bIsMp4) return -1;
+                            if (!aIsMp4 && bIsMp4) return 1;
+                            return 0;
+                          });
+                          for (const file of sortedFiles) {
+                            const candidatePath = path.join(tempDir, file);
+                            if (fs.existsSync(candidatePath)) {
+                              actualFilePath = candidatePath;
+                              break;
+                            }
+                          }
+                        }
+                        
+                        try {
+                          const fileBuffer = fs.readFileSync(actualFilePath);
+                          fs.unlinkSync(actualFilePath);
+                          const contentType = format === 'audio' ? 'audio/mpeg' : 'video/mp4';
+                          resolve(new NextResponse(fileBuffer, {
+                            headers: {
+                              'Content-Type': contentType,
+                              'Content-Disposition': `attachment; filename="media.${extension}"`,
+                              'Content-Length': fileBuffer.length.toString(),
+                            },
+                          }));
+                        } catch (fileError: any) {
+                          reject(new Error(`Failed to read downloaded file: ${fileError.message}`));
+                        }
+                      } else {
+                        reject(new Error(`YouTube: yt-dlp failed: ${retryError || pythonError || 'Unknown error'}`));
+                      }
+                    });
+                    return;
+                  }
+                  reject(new Error(`YouTube: Requested format is not available. Error: ${pythonError.substring(0, 300)}`));
                   return;
+                } else if ((errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes') || errorLower.includes('remote component')) && !triedWithoutJsRuntime) {
+                  // JS runtime error - warnings about remote components are usually non-fatal
+                  // Only reject if it's actually an error, not just a warning
+                  if (pythonError.includes('ERROR') || pythonError.includes('error:') || !pythonError.includes('WARNING')) {
+                    triedWithoutJsRuntime = true;
+                    reject(new Error(`YouTube: JavaScript runtime issue detected. Node.js may not be accessible to yt-dlp. Error: ${pythonError.substring(0, 300)}`));
+                    return;
+                  }
+                  // If it's just a warning, continue - the download might still work
                 } else if (index < pythonCommands.length - 1) {
                   tryPythonCommand(index + 1);
                 } else {
@@ -302,7 +382,14 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
         } else if (errorLower.includes('sign in') || errorLower.includes('bot') || errorLower.includes('captcha')) {
           reject(new Error('YouTube: Bot detection triggered. This may resolve automatically. Please try again later.'));
           return;
-        } else if (errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes')) {
+        } else if (errorLower.includes('requested format is not available') || errorLower.includes('format is not available')) {
+          // Format not available - this should be handled by the Python fallback
+          // But if we get here, it means yt-dlp direct failed
+          reject(new Error(`YouTube: Requested format is not available. Error: ${errorOutput.substring(0, 300)}`));
+          return;
+        } else if ((errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes') || errorLower.includes('remote component')) && !errorLower.includes('warning')) {
+          // Only reject if it's an actual error, not a warning
+          // Warnings about remote components are usually non-fatal
           reject(new Error(`YouTube: JavaScript runtime issue. Node.js path: ${process.execPath || 'not found'}. Error: ${errorOutput.substring(0, 300)}`));
           return;
         }
@@ -514,10 +601,15 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
               } else if (errorLower.includes('sign in') || errorLower.includes('bot') || errorLower.includes('captcha')) {
                 reject(new Error('YouTube: Bot detection triggered. This may resolve automatically. Please try again later.'));
                 return;
-              } else if ((errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes')) && !triedWithoutJsRuntime) {
-                triedWithoutJsRuntime = true;
-                reject(new Error(`YouTube: JavaScript runtime issue detected. Node.js may not be accessible to yt-dlp. Error: ${pythonError.substring(0, 300)}`));
-                return;
+              } else if ((errorLower.includes('javascript runtime') || errorLower.includes('js-runtimes') || errorLower.includes('remote component')) && !triedWithoutJsRuntime) {
+                // JS runtime error - warnings about remote components are usually non-fatal
+                // Only reject if it's actually an error, not just a warning
+                if (pythonError.includes('ERROR') || pythonError.includes('error:') || !pythonError.includes('WARNING')) {
+                  triedWithoutJsRuntime = true;
+                  reject(new Error(`YouTube: JavaScript runtime issue detected. Node.js may not be accessible to yt-dlp. Error: ${pythonError.substring(0, 300)}`));
+                  return;
+                }
+                // If it's just a warning, continue - the download might still work
               } else if (index < pythonCommands.length - 1) {
                 // Python process failed, try next command
                 tryPythonCommand(index + 1);
