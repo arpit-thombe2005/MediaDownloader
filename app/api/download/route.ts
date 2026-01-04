@@ -283,7 +283,8 @@ async function downloadWithYtDlp(url: string, format: string, quality: string, v
                     triedGenericFormat = true;
                     console.log('Format not available, retrying with generic format selector');
                     // Retry with a simpler format that should always work
-                    const simpleArgs = buildArgs(useJsRuntime);
+                    // Keep JS runtime enabled (use true)
+                    const simpleArgs = buildArgs(true);
                     simpleArgs.push('-f', 'best/bestvideo+bestaudio'); // Very generic fallback
                     if (format === 'audio') {
                       simpleArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
